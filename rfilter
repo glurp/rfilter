@@ -1,0 +1,466 @@
+#!/usr/bin/ruby
+# 
+##########################################################
+#  rfilter.rb : filter on stdin, splitted on blanc(s)
+##########################################################
+require 'time'
+require 'date'
+require 'fileutils'
+require 'pp'
+require 'json'
+
+########################################################
+# Filters primitives
+########################################################
+class Code
+
+# for tohcount(date by step)
+def time_step(strdate,step=60) Time.at(step*((Time.parse(strdate).to_i rescue 0)/step)) end
+
+def show() ## helper for debugging : show ech field scanned by rfilter  on first line of stdin, and exit
+ a=$line.split(/\s+/)
+ puts "line: #{$line}"
+ _.each_with_index {|v,i| puts "  _#{i+1} => '#{v}'"}
+ exit(1)
+end
+
+$eend=nil
+def eend(&b)  ## specify a bloc to evaluate after end of input scanning
+  $eend=b unless $eend
+end
+
+def timediff(delta_max,date=nil) ## extract date from current line and compare with last one, call bloc if delta is greter  than delta_max, in seconds
+  date1=unless date
+    $line[/(\d\d\d\d[-\/]\d\d[-\/]\d\d[\sT][\S]*)/,1]
+  else
+    date
+  end
+  return unless date1
+  dt = Time.parse( (date1.kind_of? String) ? date1 : date1.to_s)
+  if defined?($last_date)
+    d=dt-$last_date
+    p [d,delta_max] if $DEBUG
+    if (delta_max >0 && d > delta_max) || ( delta_max < 0 && d < -delta_max)
+      if block_given?
+	yield(d,date1)
+      else
+        puts "#{$line} | #{d} secs"
+        puts $oldline 
+        puts "====="
+      end
+    end
+  end 
+  $last_date=dt
+end
+
+def ifdiff(field) ## yield bloc if parameter value is distinct of last call value
+ yield($ifdiff,field) if defined?($ifdiff) && field!=$ifdiff 
+ $ifdiff=field
+end
+
+#-######################### Extract some strings, and print
+
+
+def grep(str,no=nil)  ## print if line match (or field number <no> (0..n-1) match)
+ puts $line if ((no.nil?) ? $line : _[no]) =~ /#{str}/ 
+end
+
+def cut(*fieldsnum)  ## extract some  column(s), specifiad by ther index (0..n-1)
+ a=_
+ puts fieldsnum.map {|num| a[num]}.join("\t")
+end
+def clear() ## clear screen
+  puts `clear`
+end
+def extr(word) ## extract first match in current line
+  $line[/#{word}/,1]
+end
+
+def atoi(str=nil) ## return first number in scaned in current line (or in str parameter)
+  (str||$line).scan(/\d+/).first.to_i
+end
+
+def after(str,x=1,n=1) ## extract next word after a word in current line
+  rest=$line[/#{str}[":,\s]*(.*)$/,1].split(/\s+/)
+  rest[x-1,n]
+end
+
+def extrd(regexp)  ## print current lne if line match regexp parameter
+   if $line.match(/#{regexp}/)
+     puts $line
+  end
+end
+
+def match(regexp) ## print first field of regexp in current line if match
+  e=$line.match(regexp)
+  puts e.values_at(0) if e
+end
+
+def sum(i) ## add all data in a column/data
+ $pending||=0
+ $pending+=i.to_i
+end
+
+def mult(i) ## mutliply all data in a column
+ $pending||=1
+ $pending*=i.to_i
+end
+
+def statistics(i) ## register value, at end calculus and print mean/median/stddev
+ value=i.to_f
+ $pending||={type: :statistics,count: 0,min: 999999999999999,max:-99999999999999999, sum: 0, sum2: 0}
+
+ $pending[:count]=$pending[:count]+1
+ $pending[:min] =value if $pending[:min] > value
+ $pending[:max] =value if $pending[:max] < value
+ $pending[:sum]+=value 
+ $pending[:sum2]+=value*value
+end
+def self.end_statistics(data)
+ v=data
+ r={}
+ %i{count min max}.each {|k| r[k] = v[k]}
+ r[:mean]=v[:sum]/v[:count]
+ r[:variance]= ((v[:count]*v[:sum2] - v[:sum]*v[:sum]) ** 0.5 )/v[:count]
+ r
+end
+
+#-##################### Ploting
+# plot()  multi-curve, mono  call; multi shot   line
+# splot() multi-curve, multi call              line 
+# bplot() mono-curve,  multi call              barr
+# rplot() multi-curve, uniq call, with x-label line
+#
+# for n in {1..10}; do echo $n ; done           | rfiler 'plot(_1,title:"Vmstat")'
+# for n in {1..10}; do echo $n $((n+10)); done  | rfiler 'plot(_1,_2,title:"Vmstat",name:%w{a b})'    # mono-call
+# for n in {1..10}; do echo $n $((n+10)); done  | rfiler 'splot("a",_1);splot("b",_2)'                # multi-call
+# vmstat 1                                      | rfiler 'bplot(nol,_2,title:"Vmstat"); stop_after(10)'
+# (echo "a 1 2 3 4 5 6" ; echo "b 6 5 4 3  1")  | rfilter 'rplot(_1,_[1..-1])"
+
+# $pending={type: :type_de courbes ; data : [ [v1,v2,v3..], ... ] }
+# $pending={type: :rplot           ; data : { "name1": [ v1,v2,v3... ], name2: [y1,y2,y3...] }
+
+$plotconf={title: "RFilter",names:[]}
+
+def plot(*v)  ## register some value in only-one curve, plit line at end
+ $pending||={type: :plot,data: []}
+  if Hash === v.last
+    $plotconf=v.last
+    v.pop
+ end
+ $pending[:data] << v.map {|a| a.to_f}  
+end
+
+def splot(name,value)  ## append value to named curve, plot graph at end
+ $pending||={type: :rplot,data: []}
+ $plotconf[:name] << name unless $pending[:data][name]
+ $pending[:data][name]||=[]
+ $pending[:data][name] << value.to_f
+end
+
+def rplot(name,lvalue,h=nil) ## append values in curve name, plot graph at end (several call >> one curve) 
+ $pending||={type: :rplot,data: {}}
+ $plotconf=h if h
+ $pending[:data][name]||=[]
+ $pending[:data][name].concat(lvalue.map {|v| v.to_f})
+end
+
+def bplot(label,*v)  ## register values in curve label, plot bargraph at end (onecall=>onecurve)
+ $pending||={type: :bplot,data: []}
+  if Hash === v.last
+    $plotconf=v.last
+    v.pop
+ end
+ $pending[:data] << [label,v.map(&:to_f)]  
+end
+
+#--- end_{type}() : appellé en fin de traitements, type==$pending[:type]
+
+def self.end_plot(data) end_allplot(data) end
+def self.end_bplot(data) end_allplot(data) end
+def self.end_rplot(data) 
+ lname=$pending[:data].keys
+ $pending[:data].each {|k,lv| p [k,lv[0..10]] }
+ $plotconf[:name]=$pending[:data].keys
+ len=$pending[:data].max_by {|(name,lv)|  lv.size}.last.size
+ puts "nb mesures : #{len}\n\n"
+ $pending[:data] = (0...len).each_with_object([]) {|index,r| r<< $pending[:data].map {|name,lv| lv[index]||0 }}
+ $pending[:type]=:plot
+ end_allplot($pending)
+end
+
+def self.end_allplot(data)
+  return unless data[:data] && data[:data].size>0 && data[:data].first.size>0
+  require 'tmpdir'
+  require 'gruff' rescue (puts "gruff not installed!\n install libmagickwand-dev and libmagickcore-dev ;\n and the : gem install gruff ",exit(1))
+  fn=Dir.mktmpdir("plot-")
+  Dir.rmdir(fn)
+  filename="#{Dir.tmpdir()}/#{fn}.png"
+  filename="#{fn}.png"
+  case data[:type]
+  when :plot
+    g = Gruff::Line.new(600)
+    g.title = $plotconf[:title] 
+    g.marker_font_size=15
+    g.marker_count=10
+    puts $pending[:data].inspect
+    nb_echant=$pending[:data].first.size
+    nb_echant.times { |no| g.data(($plotconf[:name][no] rescue nil) || "measures #{no+1}",$pending[:data].map {|pt| pt[no] }) }
+    g.labels=data[:data].inject({}) {|h,l| h[h.size]=l.first||h.size.to_s ; h}
+    while g.labels.values.join("").size > 100
+      g.labels.keys.each_slice(3) { |ks| ks[1..-1].each {|k|  g.labels.delete(k) } } 
+    end
+    g.write(filename)
+  when :bplot
+    g = Gruff::Bar.new(1000)
+    g.marker_font_size=15
+    g.marker_count=10
+    g.title = $plotconf[:title]
+    ($pending[:data].first.last.size).times { |no| 
+       g.data(($plotconf[:name][no] rescue nil) || "measures #{no+1}",$pending[:data].map {|pt| pt.last[no] }) 
+    }
+    g.labels=data[:data].inject({}) {|h,l| h[h.size]=l.first||h.size.to_s ; h}
+    while g.labels.values.join("").size > 150
+      g.labels.keys.each_slice(3) { |ks| ks[1..-1].each {|k|  g.labels.delete(k) } } 
+    end
+    g.write(filename)
+  else
+   puts "unknown plot type #{data[:type]}"
+  end
+  %x{ruiby 'image("#{filename}")' &}
+  {filename: filename,count: data[:data].size,usage: "Use display or eog or feh for view image..."}
+end
+
+
+#-###################### synthesis in Hashmap(s)
+
+
+def toh(a,b) ## put in Hash h[a]=b ; print Hash at exit
+ $pending||={}
+ $pending[a]=b 
+end
+
+def tohcount(a,b="1") ## put in Hash h[a]+=b ; print Hash at exit
+ $pending||={}
+ $pending[a]=($pending[a]||0)+b.to_i 
+end
+
+def tohlist(a,b="?") ## push b in array in h[a] ; print Hash of Array at exit
+ $pending||={}
+ $pending[a]=($pending[a]||[])<< b
+end
+
+def tohh(a,b,c) ## put in Hash h[a][b]= b ; print Hash of hash at exit
+ $pending||={}
+ $pending[a]||=($pending[a]||{})
+ $pending[a][b]=c
+end
+
+def tohhcount(a,b,n=1) ## put in Hash h[a][b]+= n ; print Hash of hash at exit
+ $pending||={}
+ $pending[a]||=($pending[a]||{})
+ $pending[a][b]= ($pending[a][b]||0)+n.to_i
+end
+
+#-######################" Selection and format
+
+def sela(&b) ## selection and print as table
+ puts _.join("\t") if yield($line,_) 
+end
+
+def sell(&b) ## selection and print brut line
+ puts $line if yield($line,_) 
+end
+
+def format_if(fstr,*args,&b) ## format some field if yield eval to true
+ puts(fstr % args)  if yield($line,_)
+end
+
+def format(fstr,*args) ## format and print some field, inconditionaly
+ puts(fstr % args)
+end
+
+def pprint(*args) ## print args
+ if args.size==1 && String === args.first
+   puts(args.first.gsub(/(_[0-9]+)/) { |a| instance_eval(a) })
+ else
+   puts(args.join(" "))
+ end
+end
+
+def delta(value,no=0) ## compare value with old-one, varname 'no'
+ value=value.to_f
+ $hdelta||={}
+ $hdelta[no]||=value
+ d=value - $hdelta[no]
+ $hdelta[no]=value
+ d
+end
+
+#-################## stop/skip packet on stdin lines
+
+$skip=true
+def skip_until(filter)   ## do nothing until a line match ; eval bloc after line match
+  if ! $skip || $line=~filter
+    yield
+    $skip=false
+  end
+end
+
+def stop_after(n) ## stop n seconds afrter startup
+   $stop=true if (Time.now-$startup).to_i >= n 
+end   
+def stop_nol(n)  ## stop if noline exceed parameter (print beginning ans stop)
+  $stop=true if nol>=n 
+end
+def stop_if(v)	 ## stop if parmaeter is true
+  $stop=true if v 
+end
+end
+
+########################################################
+# output anything in string
+########################################################
+
+def ppr(data)
+  case data
+   when Array
+    if data.first && Array === data.first
+      data.each {|a| puts a.join(" ")}
+    else
+      data.each {|a| puts a.to_s}
+    end
+   when Hash
+    data=Code.send("end_#{data[:type]}".to_sym,data) if data[:type]
+    size=data.keys.max_by {|a| a.to_s.size}.size
+    data.each {|(k,v)| puts "%#{size+1}s => %s" % [k,v]}
+   else
+     puts data
+ end
+end
+
+
+########################################################
+#  Help
+########################################################
+
+if ARGV.size==0 || ARGV.first =~ /^--?h(e(l(p)?)?)?/ 
+puts <<EEND
+RubyFilter : as simple as awk, with ruby expression and many primitive (extract/synthesis/ploting)
+
+Usage by pipe or by filenames arguments:  
+> cat ddd | rfilter 'expression'
+or
+> rfilter 'expression' *.txt
+
+With
+   expression = ruby code, can use $pending
+At the end of input, current result ($pending) is printed, if exist
+
+Specials Filters
+=================
+
+#{File.read(__FILE__).split(/\r?\n/).grep(/(^\s*+def.*?##)|(^#-#)/).map {|l| 
+  if l =~ /^#-#/
+    c1=l.split(" ",2).last
+    c2="-"*c1.size
+    "\n#{c1}\n#{c2}\n"
+  else
+    "%-30s : %s" % l.gsub(/def /,"  ").split("##").map {|x| x.strip}
+  end
+}.join("\n")}
+
+
+Exemples:
+========
+Count number of file which have size bigger than 1K:
+ > ls -l | rfilter 'sell {_5.to_i>1024}' | rfilter 'sum 1'
+
+Count volumes of  files which have size bigger than 1K:
+ > ls -l | rfilter 'sell {_5.to_i>1024}' | rfilter 'sum _5'
+
+Count LOC of shell-script files
+ > find . -type f -name '*.sh' -exec cat {} \; | rfilter 'sell {_0!=/^\s*#/ && _0.size>0}' | rfilter 'sum 1'
+
+Format lines
+> ls -l | rfilter "format('%-15s %10s',_9,_5)" 
+
+Format lines if condition
+> ls -l a*.rb |  rfilter "format_if('%15s | %10s',_9,_5) { _5.to_i>1}"
+           a.rb |        864
+       abool.rb |        888
+     allways.rb |        698
+        anac.rb |       5777
+
+statistics: "", 
+Calcultator :
+>echo 10.33 22.44 | rfilter 'puts Math.sin(_1.to_f) ; puts _2.to_f*2'
+-0.7865622859965424
+44.88
+
+EEND
+exit(1)
+end
+
+
+########################################################
+#  Main
+########################################################
+
+$cc=nil
+regexp=/\s+/
+if ARGV.first == "-F"||  ARGV.first == "--field-separator"
+  ARGV.shift
+  regexp= /#{ARGV.shift}/
+end
+
+while ARGV.first=="-v" && ARGV.size>3
+  ARGV.shift
+  name=ARGV.shift
+  val=ARGV.shift
+  eval "$#{name}='#{val}'"
+end
+
+
+
+
+code=ARGV.shift
+clazz=<<EEND
+class Code
+  (1..55).each {|nop| define_method("_#\{nop}") { $array[nop-1]||"" } }
+  define_method("nol") { @nol }
+  define_method("_") {  $array }
+  define_method("_0") { $line }
+  def initialize(nol,regexp,line)
+    @nol=nol
+    $line=line.chomp
+    @regexp=regexp
+    $array=($line||"").split(@regexp)
+  end
+  def execute()
+    #{code}
+  end
+end
+EEND
+
+#puts clazz
+eval clazz
+
+nol=0
+STDOUT.sync=true
+$oldline=""
+$o=0
+$stop=false
+$startup=Time.now
+ARGF.each do |line|
+    Code.new(nol,regexp,line).execute
+    $oldline=$line
+    nol+=1
+    break if $stop
+end
+if defined?($pending) && ! $eend
+ ppr $pending 
+end
+if $eend
+  $eend.call
+end
