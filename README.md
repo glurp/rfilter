@@ -3,7 +3,7 @@
 Usage :
 ```
 cat log*.txt | rfilter 'pprint _1,_3,_.size," ==> ",_0'
-#  extract first and third field, number of field,all line,  foreach line ( lines splitted with \s*),
+#  extract first and third field, number of field,all line,  foreach line ( lines splitted with \s+),
 #  _[0] == _1 ; _[1]==_2 . . .
 
 rfilter 'expression' log*.txt 
