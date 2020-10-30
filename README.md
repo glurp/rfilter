@@ -20,6 +20,7 @@ rfilter  # without args
 Tested on linux and Windows.
 
 Work (faster) with jruby.
+Code is optimised for scanning of GByte of logs :)
 
 For plotting, gem 'gruff' is used.
 
@@ -66,7 +67,7 @@ Ploting
 
 plotting is global : one session generate one raster image, containing one zone plot with one or several curve/barrgraph.
 
-Raster file name (in /tmp) is printed at the end.
+Raster file name generated, (in /tmp) is printed at the end.
 
 ```
 plot(*v)                       : register some value in only-one curve, plot line at end
