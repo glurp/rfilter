@@ -1,11 +1,14 @@
 # rfilter
+```
 Usage :
-  rfitler
+```
+ rfitler
   .... help
+```  
 
-Tested on linux and Windows.
-
-for plotting, gem 'gruff' is used.
+Tes
+elp  ted on linux and Windows.
+plotting, gem 'gruff' is used.
 
 # mecanism for function with END action
 
