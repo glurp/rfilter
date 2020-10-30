@@ -2,33 +2,48 @@
 
 Usage :
 ```
- rfitler
-  .... help
+cat log*.txt | rfilter 'pprint _1,_3,_.size," ==> ",_0'
+#  extract first and third field, number of field,all line,  foreach line ( lines splitted with \s*),
+#  _[0] == _1 ; _[1]==_2 . . .
+
+rfilter 'expression' log*.txt 
+# same
+
+rfilter -F pattern -v a=b -v cc=dd 'expression' log*.txt
+#       pattern is used for splitting lines
+#       define $a with value 'b' and $cc='dd'
+
+rfilter  # without args
+  ....>> help
 ```  
 
 Tested on linux and Windows.
+
+Work (faster) with jruby.
 
 For plotting, gem 'gruff' is used.
 
 # mecanism for function with END action
 
-
-some function need that something be done at the end of stdin.
+Some function need that something be done at the end of stdin.
 
 By exemple, ```sum(_1)``` will sum  contents of first collumn, and wanted to print the value at the end of scan.
-
++
 They are 3 patterns for that :
 * eend {} : declare the bloc of instruction to be execute at the end
 * write some ruby data in $pending : at the end; $pending is pretty-printed
-* write in $pending a Hash with template : {type: :yourendname ,data: [...]}
-  at the end, method eend_yourendname() will be called. it can woork with $pending[:data]
-  see statistics(i) function for simple usage of this pattern.
+* write in $pending a Hash with template : {type: :yourendname ,data: [...]}.
+  At the end, method 'eend_yourendname()' will be called. it can work with $pending[:data].
+
+See statistics(i) function for simple usage of this pattern.
 
 # List of special functions
+
 ```
 show()                         : helper for debugging : show each field scanned by rfilter  on first line of stdin, and exit
 eend(&b)                       : specify a bloc to evaluate after end of input scanning
-timediff(delta_max,date=nil)   : extract date from current line and compare with last one, call bloc if delta is greater than delta_max, in seconds
+timediff(delta_max,date=nil)   : extract date from current line and compare with last one, call bloc if delta is 
+                                 greater than delta_max, in seconds
 ifdiff(field)                  : yield bloc if parameter value is distinct of last call value
 ```
 
@@ -49,8 +64,10 @@ Ploting
 -------
 
 
-plotting is global : one session generate one raster image, containing one zone plot with one or several curve/barrgraph
-raster file name (in /tmp) is printed at the end.
+plotting is global : one session generate one raster image, containing one zone plot with one or several curve/barrgraph.
+
+Raster file name (in /tmp) is printed at the end.
+
 ```
 plot(*v)                       : register some value in only-one curve, plot line at end
 splot(name,value)              : append value to named curve, plot curves in one plot, at end
@@ -76,11 +93,7 @@ Selection and format
 --------------------
 
 ```
-sela(&b)                       : selection and print as table
-sell(&b)                       : selection and print brut line
-format_if(fstr,*args,&b)       : format some field if yield eval to true
-format(fstr,*args)             : format and print some field, inconditionaly
-pprint(*args)                  : print args
+pprint(*args)                  : print args in context : blank-separated, _1,_2... is understand, 
 delta(value,no=0)              : compare value with old-one, varname 'no'. so several delta() can be used in one session
 ```
 
@@ -99,28 +112,35 @@ stop_if(v)                     : stop if parameter is true
 
 # simples Exemples
 
-```cat log*.txt | rfilter 'expression' ```
+```
+cat log*.txt | rfilter 'expression' 
+```
 
 or
-```rfilter 'expression' *.txt`
+```
+rfilter 'expression' *.txt`
+```
+
 Count number of file which have size bigger than 1K:
 ```
 ls -l | rfilter 'sell {_5.to_i>1024}' | rfilter 'sum 1'
 ```
-Format lines`
-ls -l | rfilter ```
-"format('%-15s | %s',_9,_5)" 
+
+Format lines
+
+```
+ls -l | rfilter "format('%-15s | %s',_9,_5)" 
 ```
 
 extract data from json fragment, en sumerize at end
+A directorie have file contening this kind of fragment :
 ```
-```
-a directorie have file contening this kind of fragment :
 {"Action":"/BootNotification", "chargeBoxIdentity":"FR*S33*E*2232*A-1", "chargePointModel":"eee", "chargePointSerialNumber":"89798 "chargeBoxSerialNumber":"87909", "firmwareVersion":"23.44", "iccid":"888888888888888", "imsi":"999999999999", "date":"2018-01-13 20:16:55"},
 . . . .
 ```
 
 This code create a CSV file contenning last value of iccid and imsi for each equipment Id (chargeboxId) :`
+```
 grep iccid * | rfilter 'cbi=extr(/"chargeBoxIdentity":"(.*?)"/);\
                         iccid=extr(/"iccid":"(.*?)"/);\
                         imsi=extr(/"imsi":"(.*?)"/); \
@@ -128,7 +148,8 @@ grep iccid * | rfilter 'cbi=extr(/"chargeBoxIdentity":"(.*?)"/);\
                         eend { $pending.each {|k,v| puts "#{k};#{v}" }}' > iccid_imsi.csv
 
 ```
-explanation:
+
+Explanation:
 * extr extract field frem regexp
 * toh(k,v) memorise $pending[k]=v , so at the ending, $pending contain last value of each key 'k'
 * eend declare code to be executed : it scan $pending and format 'chargeboxId;iccid;imsi' foreach equipment in log.
