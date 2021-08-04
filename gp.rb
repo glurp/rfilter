@@ -1,7 +1,21 @@
-# W=a+bw+cH
-# H=a+bH+cW
-#
 require 'gnuplot'
+
+# Usage:
+#nb.times { |i|
+#	w=f(i)
+#   h=g(i)
+#	lw << w
+#	lh << h
+#	li << i
+#} 
+#plot("Generations",["W",li,lw,  "H",li,lh],"lines")
+#
+#nb.times { |i|
+#	w=f(i)
+#   h=g(i)
+#	l << [i,h,w]
+#} 
+#rplot("Generations",l,["W","H"],"lines")
 
 
 def plot(title,llxy, type)
