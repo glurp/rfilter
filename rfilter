@@ -9,13 +9,41 @@ require 'fileutils'
 require 'pp'
 require 'json'
 
+Q="'" # quote, difficult to use in code
+
 ########################################################
 # Filters primitives
 ########################################################
 class Code
 
-# for tohcount(date by step)
+###### JSON parsing json : 
+# to_json2 : all in global {}, 
+# to_json : all in first local {} ;
+# _pjson ou _json: without p : replace " by ' ; _p : brute data
+
+### convert to json
+def to_pjson2(str) fr=str[/({.*})/,1]; return fr ? JSON.parse(fr) : {} end
+def to_json2(str)  fr=str[/({.*})/,1]; return fr ? JSON.parse(fr.gsub('"',"'")) : {} end
+def to_pjson(str)  fr=str[/({.*?})/,1]; return fr ? JSON.parse(fr) : {} end
+def to_json(str)   fr=str[/({.*?})/,1]; return fr ? JSON.parse(fr.gsub('"',"'")) : {} end
+
+### round timestamp : for tohcount(date by step)
 def time_step(strdate,step=60) Time.at(step*((Time.parse(strdate).to_i rescue 0)/step)) end
+
+### exrtract first date in line (or str)
+def extr_date(str=nil) 
+  line=str ? str : _0
+  line[/(\d\d\d\d[-\/]\d\d[-\/]\d\d[\sT]\d\d:\d\d:\d\d)/,1]
+end
+
+def time_round(duration,str=nil) ## extract first timestamp in line, round it with duration
+  unless str
+   str=$line[/(\d\d\d\d[-\/]\d\d[-\/]\d\d[\sT]\d\d:\d\d:\d\d)/,1]
+  end
+  str ? time_step(str,duration)  : nil
+ end
+
+def parsetime(strdate) Time.parse(strdate) end 
 
 def show() ## helper for debugging : show ech field scanned by rfilter  on first line of stdin, and exit
  a=$line.split(/\s+/)
@@ -72,20 +100,19 @@ end
 def clear() ## clear screen
   puts `clear`
 end
-def extr(word) ## extract first match in current line
-  $line[/#{word}/,1]
+def extr(word,str=nil) ## extract first match in current line
+  (str||$line)[/#{word}/,1]
 end
 
 def atoi(str=nil) ## return first number in scaned in current line (or in str parameter)
   (str||$line).scan(/\d+/).first.to_i
 end
 
-def after(str,x=1,n=1) ## extract next word after a word in current line
-  rest=$line[/#{str}[":,\s]*(.*)$/,1].split(/\s+/)
-  rest[x-1,n]
+def after(str) ## extract next word after a word in current line
+  rest=$line[/#{str}[":,\s]?(.*?)[":,\s]$/,1].split(/\s+/)
 end
 
-def extrd(regexp)  ## print current lne if line match regexp parameter
+def extrd(regexp)  ## print current line if line match regexp parameter
    if $line.match(/#{regexp}/)
      puts $line
   end
@@ -106,29 +133,53 @@ def mult(i) ## mutliply all data in a column
  $pending*=i.to_i
 end
 
-def statistics(i) ## register value, at end calculus and print mean/median/stddev
- value=i.to_f
- $pending||={type: :statistics,count: 0,min: 999999999999999,max:-99999999999999999, sum: 0, sum2: 0}
+def mstat(name,value)
+ $pending[:data][name] ||= {count: 0,min: value,max: value, sum: 0, sum2: 0}
+ h=$pending[:data][name]
+ h[:count]=h[:count]+1
+ h[:min] =value if h[:min] > value
+ h[:max] =value if h[:max] < value
+ h[:sum]+=value 
+ h[:sum2]+=value*value
+end
 
- $pending[:count]=$pending[:count]+1
- $pending[:min] =value if $pending[:min] > value
- $pending[:max] =value if $pending[:max] < value
- $pending[:sum]+=value 
- $pending[:sum2]+=value*value
+$lissage=[]
+def lissage(v,nb_before=1,nb_after=1) ## lissage mesure
+  $lissage||=[]
+  $lissage << v.to_f
+  all= nb_before+1+nb_after
+  if $lissage.size >= all
+    $lissage=$lissage[-all..-1]
+    $lissage[nb_before]=$lissage.inject(0.0) { |sum,el| sum + el } / $lissage.size
+    $lissage[nb_before]
+  else   
+     v.to_f
+  end
+end
+
+def statistics(p) ## register value, at end calculus and print mean/variance
+ $pending||={type: :statistics,data: {}}
+ if Hash === p
+   p.each {|k,v| mstat(k,v.to_f) }
+ else
+   mstat("data",p.to_f)
+ end
 end
 def self.end_statistics(data)
- v=data
- r={}
- %i{count min max}.each {|k| r[k] = v[k]}
- r[:mean]=v[:sum]/v[:count]
- r[:variance]= ((v[:count]*v[:sum2] - v[:sum]*v[:sum]) ** 0.5 )/v[:count]
- r
+ data[:data].each {|name,v|
+   r={}
+   %i{count min max}.each {|k| r[k] = v[k]}
+   r[:mean]=v[:sum]/v[:count]
+   r[:variance]= ((v[:count]*v[:sum2] - v[:sum]*v[:sum]) ** 0.5 )/v[:count]
+   puts "#{name} : #{r.map {|k,v| "%5s: %f" % [k,v]}.join(" ") }" 
+ }
+ {total: data[:data].size}
 end
 
 #-##################### Ploting
-# plot()  multi-curve, mono  call; multi shot   line
+# plot()  mono-curve, mono  call; multi shot;  line
 # splot() multi-curve, multi call              line 
-# bplot() mono-curve,  multi call              barr
+# bplot() multi-curve, multi call              barr
 # rplot() multi-curve, uniq call, with x-label line
 #
 # for n in {1..10}; do echo $n ; done           | rfiler 'plot(_1,title:"Vmstat")'
@@ -142,7 +193,7 @@ end
 
 $plotconf={title: "RFilter",names:[]}
 
-def plot(*v)  ## register some value in only-one curve, plit line at end
+def plot(*v)  ## register some value in only-one curve, plot at end
  $pending||={type: :plot,data: []}
   if Hash === v.last
     $plotconf=v.last
@@ -151,14 +202,14 @@ def plot(*v)  ## register some value in only-one curve, plit line at end
  $pending[:data] << v.map {|a| a.to_f}  
 end
 
-def splot(name,value)  ## append value to named curve, plot graph at end
- $pending||={type: :rplot,data: []}
- $plotconf[:name] << name unless $pending[:data][name]
+def splot(name,value)  ## append value to named curve, plot all curve at end
+ $pending||={type: :rplot,data: {} }
+ $plotconf[:names] << name  unless $pending[:data][name]
  $pending[:data][name]||=[]
  $pending[:data][name] << value.to_f
 end
 
-def rplot(name,lvalue,h=nil) ## append values in curve name, plot graph at end (several call >> one curve) 
+def rplot(name,lvalue,h=nil) ## append array of values in curve name, plot graph at end (several call >> one curve) 
  $pending||={type: :rplot,data: {}}
  $plotconf=h if h
  $pending[:data][name]||=[]
@@ -174,10 +225,27 @@ def bplot(label,*v)  ## register values in curve label, plot bargraph at end (on
  $pending[:data] << [label,v.map(&:to_f)]  
 end
 
+def lplot(label,*v)  ## register values in curve label, plot curves at end (onecall=>onecurve)
+ $pending||={type: :lplot,data: []}
+  if Hash === v.last
+    $plotconf=v.last
+    v.pop
+ end
+ $pending[:data] << [label,v.map(&:to_f)]  
+end
+def time_plot(step= 60)   ## plotting logs time-density of timestamp log line 
+   date=time_round(step).to_i
+   $pending||={type: :time_plot,data: {}}
+   #  put 0 value for empty periode ( stdin must be in time-order asc )
+   c=$pending[:data]
+   c[c.keys.last+step]=0  while c.size>0 && (c.keys.last+step) <date
+   $pending[:data][date] ||= 0
+   $pending[:data][date] +=1
+end
 #--- end_{type}() : appellé en fin de traitements, type==$pending[:type]
-
 def self.end_plot(data) end_allplot(data) end
 def self.end_bplot(data) end_allplot(data) end
+def self.end_lplot(data) end_allplot(data) end
 def self.end_rplot(data) 
  lname=$pending[:data].keys
  $pending[:data].each {|k,lv| p [k,lv[0..10]] }
@@ -189,7 +257,21 @@ def self.end_rplot(data)
  end_allplot($pending)
 end
 
+def self.end_time_plot(data)
+  data[:data]= data[:data].each_with_object({}) {|(k,v),h| h[Time.at(k).strftime("%F %T")]=v }
+  h=data[:data].keys.each_with_object({}) {|k,h| h[k.split(" ").first]=1 }
+  if h.size <=2
+    nv= data[:data].each_with_object({}) {|(k,v),h| h[k.split(" ").last] = v  }
+    data[:data]=nv
+  end
+
+  lv=data[:data].keys.sort.each_with_object([]) {|k,a|  a << [k,[data[:data][k]]] } 
+  $pending={ type: :bplot, data: lv}
+  end_allplot($pending)
+end
+
 def self.end_allplot(data)
+  puts data.inspect[0..300]
   return unless data[:data] && data[:data].size>0 && data[:data].first.size>0
   require 'tmpdir'
   require 'gruff' rescue (puts "gruff not installed!\n install libmagickwand-dev and libmagickcore-dev ;\n and the : gem install gruff ",exit(1))
@@ -199,22 +281,21 @@ def self.end_allplot(data)
   filename="#{fn}.png"
   case data[:type]
   when :plot
-    g = Gruff::Line.new(600)
+    g = Gruff::Line.new(1000)
     g.title = $plotconf[:title] 
-    g.marker_font_size=15
-    g.marker_count=10
-    puts $pending[:data].inspect
+    g.marker_font_size=10
+    g.marker_count=15
     nb_echant=$pending[:data].first.size
     nb_echant.times { |no| g.data(($plotconf[:name][no] rescue nil) || "measures #{no+1}",$pending[:data].map {|pt| pt[no] }) }
     g.labels=data[:data].inject({}) {|h,l| h[h.size]=l.first||h.size.to_s ; h}
-    while g.labels.values.join("").size > 100
+    while g.labels.values.join("").size > 150
       g.labels.keys.each_slice(3) { |ks| ks[1..-1].each {|k|  g.labels.delete(k) } } 
     end
     g.write(filename)
-  when :bplot
-    g = Gruff::Bar.new(1000)
-    g.marker_font_size=15
-    g.marker_count=10
+  when :bplot,:lplot
+    g =data[:type]==:bplot ?  Gruff::Bar.new(1000)  : Gruff::Line.new(1000)
+    g.marker_font_size=10
+    g.marker_count=5
     g.title = $plotconf[:title]
     ($pending[:data].first.last.size).times { |no| 
        g.data(($plotconf[:name][no] rescue nil) || "measures #{no+1}",$pending[:data].map {|pt| pt.last[no] }) 
@@ -227,7 +308,7 @@ def self.end_allplot(data)
   else
    puts "unknown plot type #{data[:type]}"
   end
-  %x{ruiby 'image("#{filename}")' &}
+  %x{ruiby 'image("#{filename}")' 2>/dev/null &}
   {filename: filename,count: data[:data].size,usage: "Use display or eog or feh for view image..."}
 end
 
@@ -262,7 +343,7 @@ def tohhcount(a,b,n=1) ## put in Hash h[a][b]+= n ; print Hash of hash at exit
  $pending[a][b]= ($pending[a][b]||0)+n.to_i
 end
 
-#-######################" Selection and format
+#-###################### Selection and format
 
 def sela(&b) ## selection and print as table
  puts _.join("\t") if yield($line,_) 
@@ -272,12 +353,16 @@ def sell(&b) ## selection and print brut line
  puts $line if yield($line,_) 
 end
 
+def ifreg(regexp,&b) ## execute bbloc if regexp match line
+  yield() if _0=~regexp 
+end
+
 def format_if(fstr,*args,&b) ## format some field if yield eval to true
  puts(fstr % args)  if yield($line,_)
 end
 
 def format(fstr,*args) ## format and print some field, inconditionaly
- puts(fstr % args)
+ puts(fstr % args )
 end
 
 def pprint(*args) ## print args
@@ -288,7 +373,7 @@ def pprint(*args) ## print args
  end
 end
 
-def delta(value,no=0) ## compare value with old-one, varname 'no'
+def delta(value,no=0) ## compare (float) value with old-one, varname 'no'
  value=value.to_f
  $hdelta||={}
  $hdelta[no]||=value
@@ -307,16 +392,19 @@ def skip_until(filter)   ## do nothing until a line match ; eval bloc after line
   end
 end
 
-def stop_after(n) ## stop n seconds afrter startup
+def stop_after(n) ## stop n seconds after startup
    $stop=true if (Time.now-$startup).to_i >= n 
 end   
+
 def stop_nol(n)  ## stop if noline exceed parameter (print beginning ans stop)
   $stop=true if nol>=n 
 end
-def stop_if(v)	 ## stop if parmaeter is true
+
+def stop_if(v)	 ## stop if parameter is true
   $stop=true if v 
 end
-end
+
+end # end of Main class
 
 ########################################################
 # output anything in string
@@ -346,7 +434,7 @@ end
 
 if ARGV.size==0 || ARGV.first =~ /^--?h(e(l(p)?)?)?/ 
 puts <<EEND
-RubyFilter : as simple as awk, with ruby expression and many primitive (extract/synthesis/ploting)
+RubyFilter : as simple as awk, $n become _n, with ruby expression, and many primitive (extract/synthesis/ploting)
 
 Usage by pipe or by filenames arguments:  
 > cat ddd | rfilter 'expression'
@@ -354,7 +442,7 @@ or
 > rfilter 'expression' *.txt
 
 With
-   expression = ruby code, can use $pending
+   expression = ruby code. It can use $pending
 At the end of input, current result ($pending) is printed, if exist
 
 Specials Filters
@@ -368,12 +456,25 @@ Specials Filters
   else
     "%-30s : %s" % l.gsub(/def /,"  ").split("##").map {|x| x.strip}
   end
-}.join("\n")}
+ }.join("\n")
+}
 
+Utilities functions
+===================
+
+#{File.read(__FILE__).split(/\r?\n/).each_cons(2).select {|l1,l2| 
+  puts ["\n","l1=",l1,"$$$ l2=",l2].join(" ") if l1 =~ /^###\s/
+  (l1 =~ /^###\s/) &&  (l2 =~ /^\s*+def\s/)
+ }.map { |l1,l2| 
+    c=l1.gsub("#","")
+    t=(l2.strip.split(")",2).first+")").split(/\s+/,2).last
+    "#{t} : #{c}"
+ }.join("\n")
+}
 
 Exemples:
 ========
-Count number of file which have size bigger than 1K:
+Count number of filename which have size bigger than 1K:
  > ls -l | rfilter 'sell {_5.to_i>1024}' | rfilter 'sum 1'
 
 Count volumes of  files which have size bigger than 1K:
@@ -392,8 +493,11 @@ Format lines if condition
      allways.rb |        698
         anac.rb |       5777
 
-statistics: "", 
-Calcultator :
+statistics :
+rfilter -F ";" 'statistics(_2)' data.csv
+rfilter -F ";" 'statistics({age: _2,weight: _3,size: _4)' data.csv
+
+Calculator :
 >echo 10.33 22.44 | rfilter 'puts Math.sin(_1.to_f) ; puts _2.to_f*2'
 -0.7865622859965424
 44.88
@@ -411,7 +515,7 @@ $cc=nil
 regexp=/\s+/
 if ARGV.first == "-F"||  ARGV.first == "--field-separator"
   ARGV.shift
-  regexp= /#{ARGV.shift}/
+  regexp= %r{#{ARGV.shift}}
 end
 
 while ARGV.first=="-v" && ARGV.size>3
@@ -453,6 +557,8 @@ $o=0
 $stop=false
 $startup=Time.now
 ARGF.each do |line|
+    $dirfilename=ARGF.filename
+    $filename=File.basename($dirfilename)
     Code.new(nol,regexp,line).execute
     $oldline=$line
     nol+=1
