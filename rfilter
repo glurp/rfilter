@@ -9,43 +9,52 @@ require 'fileutils'
 require 'pp'
 require 'json'
 
-Q="'" # quote, difficult to use in code
+
+
+CQ="'" # quote, difficult to use in code
+CG='"' # guillemet
 
 ########################################################
 # Filters primitives
 ########################################################
 class Code
 
-###### JSON parsing json : 
-# to_json2 : all in global {}, 
-# to_json : all in first local {} ;
-# _pjson ou _json: without p : replace " by ' ; _p : brute data
 
-### convert to json
-def to_pjson2(str) fr=str[/({.*})/,1]; return fr ? JSON.parse(fr) : {} end
-def to_json2(str)  fr=str[/({.*})/,1]; return fr ? JSON.parse(fr.gsub('"',"'")) : {} end
-def to_pjson(str)  fr=str[/({.*?})/,1]; return fr ? JSON.parse(fr) : {} end
-def to_json(str)   fr=str[/({.*?})/,1]; return fr ? JSON.parse(fr.gsub('"',"'")) : {} end
+#-##### Special fonction  
 
-### round timestamp : for tohcount(date by step)
-def time_step(strdate,step=60) Time.at(step*((Time.parse(strdate).to_i rescue 0)/step)) end
+def to_json(str) ### extact a json object form string and parse it to ruby object
+  fr=str[/({.*})/,1]; return fr ? JSON.parse(fr) : {} 
+end
+def to_json2(str)  ### extact a json object form string and parse it to ruby object converting " to '
+  fr=str[/({.*})/,1]; return fr ? JSON.parse(fr.gsub('"',"'")) : {} 
+end
 
-### exrtract first date in line (or str)
-def extr_date(str=nil) 
+def time_step(strdate,step=60) ### round a timestamp 
+  Time.at(step*((Time.parse(strdate).to_i rescue 0)/step)) 
+end
+
+def fn_to_a(filename,filter=nil) ### Read file content to array of line, fitlered
+  File.readlines(filenames).grep(filter || /./).map {|line| line.chomp}
+end
+
+def extr_date(str=nil) ### extract first date in line (or str)
   line=str ? str : _0
   line[/(\d\d\d\d[-\/]\d\d[-\/]\d\d[\sT]\d\d:\d\d:\d\d)/,1]
 end
+def extr_time(str) extr_date(str) end
 
-def time_round(duration,str=nil) ## extract first timestamp in line, round it with duration
+def time_round(duration,str=nil) ### extract first timestamp in line, round it with duration
   unless str
    str=$line[/(\d\d\d\d[-\/]\d\d[-\/]\d\d[\sT]\d\d:\d\d:\d\d)/,1]
   end
   str ? time_step(str,duration)  : nil
  end
 
-def parsetime(strdate) Time.parse(strdate) end 
+def parsetime(strdate) ### parse e timestamp ( ISO8601/ RFC3339 )
+ Time.parse(strdate) 
+end 
 
-def show() ## helper for debugging : show ech field scanned by rfilter  on first line of stdin, and exit
+def show() ### helper for debugging : show ech field scanned by rfilter  on first line of stdin, and exit
  a=$line.split(/\s+/)
  puts "line: #{$line}"
  _.each_with_index {|v,i| puts "  _#{i+1} => '#{v}'"}
@@ -53,11 +62,11 @@ def show() ## helper for debugging : show ech field scanned by rfilter  on first
 end
 
 $eend=nil
-def eend(&b)  ## specify a bloc to evaluate after end of input scanning
+def eend(&b)  ### specify a bloc to evaluate after end of input scanning
   $eend=b unless $eend
 end
 
-def timediff(delta_max,date=nil) ## extract date from current line and compare with last one, call bloc if delta is greter  than delta_max, in seconds
+def timediff(delta_max,date=nil) ### extract date from current line and compare with last one, call bloc if delta is greter  than delta_max, in seconds
   date1=unless date
     $line[/(\d\d\d\d[-\/]\d\d[-\/]\d\d[\sT][\S]*)/,1]
   else
@@ -86,8 +95,32 @@ def ifdiff(field) ## yield bloc if parameter value is distinct of last call valu
  $ifdiff=field
 end
 
-#-######################### Extract some strings, and print
+def extr(word,str=nil) ### extract first match in current line
+  (str||$line)[/#{word}/,1]
+end
 
+def atoi(str=nil) ### return first number in scaned in current line (or in str parameter)
+  (str||$line).scan(/\d+/).first.to_i
+end
+
+def after(str) ### extract next word after a word in current line
+  rest=$line[/#{str}[":,\s]?(.*?)[":,\s]$/,1].split(/\s+/)
+end
+
+#-######################### Extract/select some inut, and print
+
+$between=false
+def between(start,stop) ## echo if STDIN in start..stop
+  puts _0 if $between
+  if $between
+    $between = false if _0=~/#{stop}/
+  else
+    if _0=~/#{start}/
+       puts _0
+       $between=true
+    end
+  end
+end
 
 def grep(str,no=nil)  ## print if line match (or field number <no> (0..n-1) match)
  puts $line if ((no.nil?) ? $line : _[no]) =~ /#{str}/ 
@@ -99,17 +132,6 @@ def cut(*fieldsnum)  ## extract some  column(s), specifiad by ther index (0..n-1
 end
 def clear() ## clear screen
   puts `clear`
-end
-def extr(word,str=nil) ## extract first match in current line
-  (str||$line)[/#{word}/,1]
-end
-
-def atoi(str=nil) ## return first number in scaned in current line (or in str parameter)
-  (str||$line).scan(/\d+/).first.to_i
-end
-
-def after(str) ## extract next word after a word in current line
-  rest=$line[/#{str}[":,\s]?(.*?)[":,\s]$/,1].split(/\s+/)
 end
 
 def extrd(regexp)  ## print current line if line match regexp parameter
@@ -123,6 +145,8 @@ def match(regexp) ## print first field of regexp in current line if match
   puts e.values_at(0) if e
 end
 
+#-######## Do something for traitment at the end of input scan
+
 def sum(i) ## add all data in a column/data
  $pending||=0
  $pending+=i.to_i
@@ -131,6 +155,15 @@ end
 def mult(i) ## mutliply all data in a column
  $pending||=1
  $pending*=i.to_i
+end
+
+$speether=nil
+# ruby -e '1000.times { |i| p 100*Math.sin(i/100.0)+rand(i-100..i+100) }' | rfilter 'splot("brut",_1);splot("filter",smoother(_1,17))'
+def smoother(v,wsize=3) ## smoothing a number value, with a deep of wsize
+  $smoother||=[]
+  $smoother << v.to_f
+  $smoother=$smoother[-wsize..-1] if $smoother.size > wsize
+  $smoother.inject(0.0) { |sum,el| sum + el } / $smoother.size
 end
 
 def mstat(name,value)
@@ -143,21 +176,8 @@ def mstat(name,value)
  h[:sum2]+=value*value
 end
 
-$lissage=[]
-def lissage(v,nb_before=1,nb_after=1) ## lissage mesure
-  $lissage||=[]
-  $lissage << v.to_f
-  all= nb_before+1+nb_after
-  if $lissage.size >= all
-    $lissage=$lissage[-all..-1]
-    $lissage[nb_before]=$lissage.inject(0.0) { |sum,el| sum + el } / $lissage.size
-    $lissage[nb_before]
-  else   
-     v.to_f
-  end
-end
 
-def statistics(p) ## register value, at end calculus and print mean/variance
+def statistics(p) ## register value(s). at end calculus and print mean/variance
  $pending||={type: :statistics,data: {}}
  if Hash === p
    p.each {|k,v| mstat(k,v.to_f) }
@@ -171,15 +191,18 @@ def self.end_statistics(data)
    %i{count min max}.each {|k| r[k] = v[k]}
    r[:mean]=v[:sum]/v[:count]
    r[:variance]= ((v[:count]*v[:sum2] - v[:sum]*v[:sum]) ** 0.5 )/v[:count]
-   puts "#{name} : #{r.map {|k,v| "%5s: %f" % [k,v]}.join(" ") }" 
+   puts "#{name} : #{r.map {|k,v| "%5s: %f" % [k,v]}.join(" ") }"
  }
  {total: data[:data].size}
 end
 
+#"
+
 #-##################### Ploting
-# plot()  mono-curve, mono  call; multi shot;  line
-# splot() multi-curve, multi call              line 
-# bplot() multi-curve, multi call              barr
+# plot()   plot one values, without x  
+# splot()  plot one value with curve name, without x  
+# ssplot() plout one value, with cirve name and x value
+# bplot() mono-curve,  multi call              barr
 # rplot() multi-curve, uniq call, with x-label line
 #
 # for n in {1..10}; do echo $n ; done           | rfiler 'plot(_1,title:"Vmstat")'
@@ -193,7 +216,7 @@ end
 
 $plotconf={title: "RFilter",names:[]}
 
-def plot(*v)  ## register some value in only-one curve, plot at end
+def plot(*v)  ## register value,   plot one curve at end
  $pending||={type: :plot,data: []}
   if Hash === v.last
     $plotconf=v.last
@@ -202,11 +225,24 @@ def plot(*v)  ## register some value in only-one curve, plot at end
  $pending[:data] << v.map {|a| a.to_f}  
 end
 
-def splot(name,value)  ## append value to named curve, plot all curve at end
+def splot(name,value)  ## append value to named curve, plot all curves at end
  $pending||={type: :rplot,data: {} }
  $plotconf[:names] << name  unless $pending[:data][name]
  $pending[:data][name]||=[]
  $pending[:data][name] << value.to_f
+end
+
+def ssplot(name,x,value)  ## append x/y  to named curve, plot all curve at end
+ $pending||={type: :rplot,data: {} }
+ $plotconf[:names] << name  unless $pending[:data][name]
+ $last=x.to_i unless $pending[:data][name] 
+ $pending[:data][name]||=[]
+ while $last+1 < x.to_i
+    $pending[:data][name] << 0 
+    $last+=1
+ end
+ $pending[:data][name] << value.to_f
+ $last=x.to_i
 end
 
 def rplot(name,lvalue,h=nil) ## append array of values in curve name, plot graph at end (several call >> one curve) 
@@ -216,7 +252,7 @@ def rplot(name,lvalue,h=nil) ## append array of values in curve name, plot graph
  $pending[:data][name].concat(lvalue.map {|v| v.to_f})
 end
 
-def bplot(label,*v)  ## register values in curve label, plot bargraph at end (onecall=>onecurve)
+def bplot(label,*v)  ## register values in one curve , plot bargraph at end (onecall=>onecurve)
  $pending||={type: :bplot,data: []}
   if Hash === v.last
     $plotconf=v.last
@@ -309,7 +345,7 @@ def self.end_allplot(data)
    puts "unknown plot type #{data[:type]}"
   end
   %x{ruiby 'image("#{filename}")' 2>/dev/null &}
-  {filename: filename,count: data[:data].size,usage: "Use display or eog or feh for view image..."}
+  {filename: filename,count: data[:data].size,usage: "Use >display or >eog or >feh for view raster image..."}
 end
 
 
@@ -324,6 +360,20 @@ end
 def tohcount(a,b="1") ## put in Hash h[a]+=b ; print Hash at exit
  $pending||={}
  $pending[a]=($pending[a]||0)+b.to_i 
+end
+
+def toh_average(a,b="1") ## put in Hash h[a]+=b ; print Hash of average data at exit
+ $pending||={type:  :tohaverage, data:{}}
+ $pending[:data][a] ||= {sum: 0 , nb: 0}
+ $pending[:data][a][:sum]+=b.to_i
+ $pending[:data][a][:nb]+=1
+end
+
+def self.end_tohaverage(data)
+  size=$pending[:data].keys.map {|k| k.to_s.size}.max+1
+  $pending[:data].each {|k,v| puts "%-#{size}s  => %f" % [k.to_s,v[:sum].to_f/v[:nb]] }
+p $pending[:data]
+  {total: $pending[:data].size}
 end
 
 def tohlist(a,b="?") ## push b in array in h[a] ; print Hash of Array at exit
@@ -419,7 +469,10 @@ def ppr(data)
       data.each {|a| puts a.to_s}
     end
    when Hash
-    data=Code.send("end_#{data[:type]}".to_sym,data) if data[:type]
+    if data[:type]
+      Code.send("end_#{data[:type]}".to_sym,data)
+      return
+    end
     size=data.keys.max_by {|a| a.to_s.size}.size
     data.each {|(k,v)| puts "%#{size+1}s => %s" % [k,v]}
    else
@@ -445,32 +498,17 @@ With
    expression = ruby code. It can use $pending
 At the end of input, current result ($pending) is printed, if exist
 
-Specials Filters
-=================
-
-#{File.read(__FILE__).split(/\r?\n/).grep(/(^\s*+def.*?##)|(^#-#)/).map {|l| 
+#{File.read(__FILE__).split(/\r?\n/).grep(/(^\s*+def.*?##+\s)|(^#-#)/).map {|l| 
   if l =~ /^#-#/
     c1=l.split(" ",2).last
     c2="-"*c1.size
     "\n#{c1}\n#{c2}\n"
   else
-    "%-30s : %s" % l.gsub(/def /,"  ").split("##").map {|x| x.strip}
+    "%-30s : %s" % l.gsub(/def /,"  ").split(/##+/).map {|x| x.strip}
   end
  }.join("\n")
 }
 
-Utilities functions
-===================
-
-#{File.read(__FILE__).split(/\r?\n/).each_cons(2).select {|l1,l2| 
-  puts ["\n","l1=",l1,"$$$ l2=",l2].join(" ") if l1 =~ /^###\s/
-  (l1 =~ /^###\s/) &&  (l2 =~ /^\s*+def\s/)
- }.map { |l1,l2| 
-    c=l1.gsub("#","")
-    t=(l2.strip.split(")",2).first+")").split(/\s+/,2).last
-    "#{t} : #{c}"
- }.join("\n")
-}
 
 Exemples:
 ========
@@ -527,10 +565,10 @@ end
 
 
 
-
 code=ARGV.shift
-clazz=<<EEND
+clazz=<<EEND.gsub("AAA",code)
 class Code
+
   (1..55).each {|nop| define_method("_#\{nop}") { $array[nop-1]||"" } }
   define_method("nol") { @nol }
   define_method("_") {  $array }
@@ -542,12 +580,11 @@ class Code
     $array=($line||"").split(@regexp)
   end
   def execute()
-    #{code}
+    AAA
   end
 end
 EEND
 
-#puts clazz
 eval clazz
 
 nol=0
